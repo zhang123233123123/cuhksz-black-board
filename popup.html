@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Blackboard 智能聚合器</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; width: 500px; padding: 15px; background-color: #f4f6f8; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; padding-bottom: 10px; }
+        h1 { font-size: 18px; margin: 0; color: #333; }
+        #sync-button, #export-button, #clear-button { background-color: #007bff; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; font-size: 14px; }
+        #sync-button:disabled { background-color: #6c757d; cursor: not-allowed; }
+        #clear-button { background-color: #dc3545; }
+        #status-display { margin-top: 10px; font-size: 13px; color: #666; min-height: 20px; }
+        .filters { margin-top: 15px; }
+        #course-filter { padding: 5px; border-radius: 4px; border: 1px solid #ccc; }
+        .tab-nav { display: flex; border-bottom: 1px solid #ccc; margin-top: 15px; }
+        .tab-link { padding: 10px 15px; cursor: pointer; border: 1px solid transparent; border-bottom: none; font-size: 14px; }
+        .tab-link.active { border-color: #ccc; border-bottom: 1px solid white; background-color: white; margin-bottom: -1px; border-top-left-radius: 5px; border-top-right-radius: 5px; }
+        .tab-content { display: none; background-color: white; padding: 15px; border: 1px solid #ccc; border-top: none; max-height: 300px; overflow-y: auto; }
+        .tab-content.active { display: block; }
+        .item { border-bottom: 1px solid #eee; padding: 10px 0; }
+        .item:last-child { border-bottom: none; }
+        .item-header { font-weight: bold; color: #0056b3; }
+        .item-meta { font-size: 12px; color: #888; margin-top: 4px; }
+        .item-body { margin-top: 8px; font-size: 14px; line-height: 1.5; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Blackboard 智能聚合器</h1>
+        <div>
+            <a href="logs.html" target="_blank" style="margin-right: 10px;">查看日志</a>
+            <button id="clear-button" title="清除本地数据" style="margin-right: 8px;">清空</button>
+            <button id="export-button" title="导出为JSON">导出</button>
+            <button id="sync-button">一键同步</button>
+        </div>
+    </div>
+    <div id="status-display">正在初始化...</div>
+
+    <div class="filters">
+        <label for="course-filter">筛选课程:</label>
+        <select id="course-filter">
+            <option value="all">所有课程</option>
+        </select>
+    </div>
+
+    <nav class="tab-nav">
+        <div class="tab-link active" data-tab="announcements">公告</div>
+        <div class="tab-link" data-tab="assignments">作业</div>
+        <div class="tab-link" data-tab="others">其他内容</div>
+    </nav>
+
+    <div id="announcements" class="tab-content active"></div>
+    <div id="assignments" class="tab-content"></div>
+    <div id="others" class="tab-content"></div>
+
+    <script src="popup.js"></script>
+</body>
+</html>

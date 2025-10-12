@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>插件日志</title>
+    <style>
+        body { font-family: monospace; background-color: #1e1e1e; color: #d4d4d4; padding: 15px; }
+        h1 { color: #569cd6; }
+        button { background-color: #007acc; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; }
+        #log-container { white-space: pre-wrap; word-wrap: break-word; background-color: #252526; border: 1px solid #333; padding: 10px; margin-top: 15px; max-height: 80vh; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h1>插件运行日志</h1>
+    <button id="clear-logs-button">清空日志</button>
+    <div id="log-container">正在加载日志...</div>
+    <script src="logs.js"></script>
+</body>
+</html>
