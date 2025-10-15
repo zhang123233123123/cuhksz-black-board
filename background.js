@@ -15,9 +15,7 @@ const CONFIG = {
     // 单个课程内容页
     courseItems: {
         container: '#whatsNewView', // "What's New" 模块的容器
-        categoryBlock: 'ul.blockGroups > li[id^="block::"]', // 每个分类的块 (公告, 作业等)
-        itemRow: 'ul.itemGroups > li', // 单个内容条目
-        itemLink: 'a' // 条目的链接
+        readySelector: "li[id*='::AN'], li[id*='::AS']", // 判定课程内容加载完成的列表项
     },
     // 公告详情页
     announcementDetails: {
@@ -29,13 +27,9 @@ const CONFIG = {
         dueDate: '#metadata .metaField', // 截止日期是元数据列表的第一个字段
         instructionsContainer: '#instructions', // 指令/附件的容器
         attachments: '#instructions a' // 附件链接
-    },
-    // 用于识别条目类型的关键字
-    itemTypeKeywords: {
-        announcement: '::AN',
-        assignment: '::AS'
     }
 };
+
 
 // 2. 工具函数 (Utilities)
 // =================================================================
@@ -65,12 +59,30 @@ const setStatus = async (status, message = '') => {
 
 const executeInTab = async (tabId, func, args = []) => {
     const results = await chrome.scripting.executeScript({
-        target: { tabId },
+        target: { tabId, allFrames: true },
         func: func,
         args: args,
         world: 'MAIN'
     });
-    return results?.[0]?.result;
+    if (!Array.isArray(results)) return undefined;
+
+    const frameResults = results
+        .map(entry => entry?.result)
+        .filter(result => result !== undefined);
+
+    if (frameResults.length === 0) return undefined;
+    if (frameResults.length === 1) return frameResults[0];
+
+    for (const value of frameResults) {
+        if (Array.isArray(value) && value.length > 0) {
+            return value;
+        }
+    }
+
+    const truthyResult = frameResults.find(result => Boolean(result));
+    if (truthyResult !== undefined) return truthyResult;
+
+    return frameResults[0];
 };
 
 const waitForElement = (tabId, selector, timeout = 15000) => {
@@ -81,6 +93,7 @@ const waitForElement = (tabId, selector, timeout = 15000) => {
             const elementExists = await executeInTab(tabId, (sel) => !!document.querySelector(sel), [selector]);
             if (elementExists) {
                 clearInterval(interval);
+                await new Promise(resolve => setTimeout(resolve, 300));
                 log('SUCCESS', 'ELEMENT_FOUND', { selector });
                 resolve(true);
             } else if (Date.now() - startTime > timeout) {
@@ -124,33 +137,57 @@ function extractData_Courses(config) {
     return courses;
 }
 
+// =================================================================
+// >> 最终修正版函数 V4 <<
+// 这个版本使用了更精准的选择器，直接定位到包含内容的 <ul> 列表 (ul.itemGroups)，
+// 从而彻底避免了抓取到无效的“分类标题”li元素，根除了 unserializable 错误。
+// =================================================================
 function extractData_CourseItems(config) {
     const items = [];
-    const categoryBlocks = document.querySelectorAll(config.courseItems.container + ' ' + config.courseItems.categoryBlock);
+    const rootSelector = '#whatsNewView';
 
-    categoryBlocks.forEach(block => {
-        const blockId = block.id || '';
-        let itemType = 'other';
-
-        if (blockId.toUpperCase().includes(config.itemTypeKeywords.announcement)) {
-            itemType = 'announcement';
-        } else if (blockId.toUpperCase().includes(config.itemTypeKeywords.assignment)) {
-            itemType = 'assignment';
+    const collectItems = (typeIdentifier, itemType) => {
+        // 直接定位到包含真正条目的 <ul> 列表，它的id格式是固定的
+        const listContainer = document.querySelector(`${rootSelector} ul.itemGroups[id$=":::::${typeIdentifier}"]`);
+        
+        if (!listContainer) {
+            // 如果找不到这个列表容器（例如课程没有公告），就直接跳过
+            return;
         }
 
-        const itemRows = block.querySelectorAll(config.courseItems.itemRow);
+        // 只在找到的列表容器内查找 li
+        const itemRows = listContainer.querySelectorAll('li[id]');
+
         itemRows.forEach(row => {
-            const link = row.querySelector(config.courseItems.itemLink);
-            if (link && row.id) {
-                const clickSelector = `#${row.id.replace(/:/g, '\\:')} > span > a`;
-                items.push({
-                    title: link.innerText.trim(),
-                    type: itemType,
-                    clickSelector: clickSelector
-                });
+            const link = row.querySelector("a[onclick*='nautilus_utils']");
+            
+            // 最终的、最严格的验证：必须有ID、有链接、有标题
+            if (!row.id || !link) {
+                return; 
             }
+            const title = link.innerText.trim();
+            if (!title) {
+                return;
+            }
+
+            items.push({
+                title: title,
+                type: itemType,
+                id: row.id
+            });
         });
-    });
+    };
+
+    // 使用列表的ID后缀 ('AN', 'AS', 'CO') 来精确定位
+    collectItems('AN', 'announcement');
+    collectItems('AS', 'assignment');
+    collectItems('CO', 'other');
+
+    if (items.length === 0) {
+        console.warn('[extractData_CourseItems] No course items matched expected selectors under #whatsNewView.');
+    } else {
+        console.log(`[extractData_CourseItems] Total items collected: ${items.length}`);
+    }
 
     return items;
 }
@@ -223,7 +260,7 @@ async function runAggregation(tabId) {
                 await log('INFO', 'PROCESSING_COURSE', { courseName: course.name });
 
                 await navigateAndWait(tabId, course.url);
-                const coursePageReady = await waitForElement(tabId, CONFIG.courseItems.container);
+                const coursePageReady = await waitForElement(tabId, CONFIG.courseItems.readySelector);
                 if (!coursePageReady) {
                     throw new Error(`课程页面 "${course.name}" 加载超时。`);
                 }
@@ -238,7 +275,7 @@ async function runAggregation(tabId) {
                         await log('INFO', 'ITEM_SKIPPED_ALREADY_EXISTS', { courseName: course.name, itemTitle: item.title, type: item.type });
                         continue;
                     }
-
+                    
                     let needsDetailPage = false;
                     let navigatedAway = false;
 
@@ -249,17 +286,18 @@ async function runAggregation(tabId) {
                         needsDetailPage = item.type === 'announcement' || item.type === 'assignment';
 
                         if (needsDetailPage) {
-                            const clicked = await executeInTab(tabId, (selector) => {
+                            const clicked = await executeInTab(tabId, (itemId) => {
+                                const selector = `li[id='${itemId}'] a[onclick*='nautilus_utils']`;
                                 const el = document.querySelector(selector);
                                 if (el) {
                                     el.click();
                                     return true;
                                 }
                                 return false;
-                            }, [item.clickSelector]);
+                            }, [item.id]);
 
                             if (!clicked) {
-                                throw new Error(`无法找到用于点击的选择器: ${item.clickSelector}`);
+                                throw new Error(`无法找到或点击ID为 "${item.id}" 的元素。`);
                             }
 
                             navigatedAway = true;
@@ -270,7 +308,7 @@ async function runAggregation(tabId) {
                                 const details = await executeInTab(tabId, extractData_AnnouncementDetails, [CONFIG]);
                                 aggregatedData.announcements.push({ course: course.name, ...item, ...details, type: 'announcement' });
                             } else {
-                                const ready = await waitForElement(tabId, CONFIG.assignmentDetails.instructionsContainer);
+                                const ready = await waitForElement(tabId, CONFIG.assignmentDetails.instructionsContainer, 30000);
                                 if (!ready) throw new Error('作业详情页加载超时');
                                 const details = await executeInTab(tabId, extractData_AssignmentDetails, [CONFIG]);
                                 aggregatedData.assignments.push({ course: course.name, ...item, ...details, type: 'assignment' });
@@ -287,7 +325,7 @@ async function runAggregation(tabId) {
                         if (needsDetailPage && navigatedAway) {
                             try {
                                 await navigateAndWait(tabId, course.url);
-                                await waitForElement(tabId, CONFIG.courseItems.container);
+                                await waitForElement(tabId, CONFIG.courseItems.readySelector);
                             } catch (returnError) {
                                 await log('WARN', 'RETURN_TO_COURSE_FAILED', { courseName: course.name, error: returnError.message });
                             }
@@ -407,6 +445,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         })();
         return true;
     }
-    // Return false for messages我们不处理的异步请求。
+    // Return false for messages that we don't handle asynchronously.
     return false;
 });
