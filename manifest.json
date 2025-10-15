@@ -4,10 +4,11 @@
   "version": "1.0.0",
   "description": "一键抓取并整合所有Blackboard课程的公告、作业和新内容。",
   "permissions": [
-    "storage",      
-    "scripting",    
-    "tabs",         
-    "alarms"
+    "storage",
+    "scripting",
+    "tabs",
+    "alarms",
+    "downloads"
   ],
   "host_permissions": [
     "https://bb.cuhk.edu.cn/*"

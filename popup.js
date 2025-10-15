@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const syncButton = document.getElementById('sync-button');
     const exportButton = document.getElementById('export-button');
     const clearButton = document.getElementById('clear-button');
+    const downloadButton = document.getElementById('download-button');
     const statusDisplay = document.getElementById('status-display');
     const courseFilter = document.getElementById('course-filter');
     const tabNav = document.querySelector('.tab-nav');
@@ -75,6 +76,41 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="item-meta">课程: ${item.course}</div>
                     ${bodyHtml}
                 `;
+
+                if (dataType === 'assignments' && Array.isArray(item.attachments) && item.attachments.length > 0) {
+                    const attachmentsContainer = document.createElement('div');
+                    attachmentsContainer.className = 'item-attachments';
+
+                    const label = document.createElement('div');
+                    label.className = 'item-meta';
+                    label.textContent = '附件:';
+                    attachmentsContainer.appendChild(label);
+
+                    const list = document.createElement('ul');
+                    list.className = 'attachment-list';
+
+                    item.attachments.filter(att => att && att.url).forEach((attachment, index) => {
+                        const listItem = document.createElement('li');
+                        const link = document.createElement('a');
+                        link.href = attachment.url;
+                        link.textContent = attachment.text?.trim() || `附件 ${index + 1}`;
+                        link.target = '_blank';
+                        link.rel = 'noopener noreferrer';
+                        listItem.appendChild(link);
+                        list.appendChild(listItem);
+                    });
+
+                    if (list.childElementCount > 0) {
+                        attachmentsContainer.appendChild(list);
+                        itemEl.appendChild(attachmentsContainer);
+                    }
+                }
+
+                itemEl.querySelectorAll('a[href]').forEach(anchor => {
+                    anchor.target = '_blank';
+                    anchor.rel = 'noopener noreferrer';
+                });
+
                 container.appendChild(itemEl);
             });
         };
@@ -141,6 +177,139 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     });
+
+    const sanitizePathPart = (input, fallback) => {
+        const pattern = /[\\/:*?"<>|]+/g;
+        const trimmed = (input || '').trim();
+        if (!trimmed) {
+            const fallbackValue = (fallback || '').trim() || '文件';
+            return fallbackValue.replace(pattern, '_');
+        }
+        return trimmed.replace(pattern, '_');
+    };
+
+    const collectDownloadableAttachments = () => {
+        if (!currentData) return [];
+        const selectedCourse = courseFilter.value;
+        const assignments = Array.isArray(currentData.assignments) ? currentData.assignments : [];
+        const attachments = [];
+        const seen = new Set();
+
+        assignments
+            .filter(item => selectedCourse === 'all' || item.course === selectedCourse)
+            .forEach(item => {
+                if (!Array.isArray(item.attachments)) return;
+                item.attachments.forEach(attachment => {
+                    if (!attachment?.url) return;
+                    const key = attachment.url;
+                    if (seen.has(key)) return;
+                    seen.add(key);
+                    attachments.push({
+                        course: item.course,
+                        assignmentTitle: item.title,
+                        dueDate: item.dueDate,
+                        text: attachment.text,
+                        url: attachment.url
+                    });
+                });
+            });
+
+        return attachments;
+    };
+
+    const buildDownloadFilename = (attachment, fallbackIndex, filenameCounts) => {
+        const coursePart = sanitizePathPart(attachment.course, '课程');
+        const assignmentPart = sanitizePathPart(attachment.assignmentTitle, '作业');
+        const defaultName = `附件_${fallbackIndex + 1}`;
+        const rawName = sanitizePathPart(attachment.text, defaultName) || defaultName;
+
+        let extension = '';
+        try {
+            const urlObj = new URL(attachment.url);
+            const match = urlObj.pathname.match(/\.([^.\\/]+)$/);
+            if (match) {
+                extension = `.${match[1]}`;
+            }
+        } catch (error) {
+            console.warn('无法解析附件的扩展名', attachment.url, error);
+        }
+
+        const hasExtension = /\.[A-Za-z0-9]{1,6}$/.test(rawName);
+        let filenameCore = hasExtension ? rawName : (extension ? `${rawName}${extension}` : rawName);
+        if (!filenameCore.trim()) {
+            filenameCore = extension ? `${defaultName}${extension}` : defaultName;
+        }
+
+        const key = `${coursePart}|${assignmentPart}|${filenameCore}`;
+        const count = filenameCounts.get(key) || 0;
+        if (count > 0) {
+            const dotIndex = filenameCore.lastIndexOf('.');
+            if (dotIndex > 0) {
+                filenameCore = `${filenameCore.slice(0, dotIndex)}(${count + 1})${filenameCore.slice(dotIndex)}`;
+            } else {
+                filenameCore = `${filenameCore}(${count + 1})`;
+            }
+        }
+        filenameCounts.set(key, count + 1);
+
+        return `${coursePart}/${assignmentPart}/${filenameCore}`;
+    };
+
+    const triggerDownload = (attachment, filename) => new Promise(resolve => {
+        chrome.downloads.download({ url: attachment.url, filename, saveAs: false }, downloadId => {
+            if (chrome.runtime.lastError || typeof downloadId !== 'number') {
+                console.error('下载失败', attachment.url, chrome.runtime.lastError?.message);
+                resolve({ ok: false, error: chrome.runtime.lastError?.message || '未知错误' });
+            } else {
+                resolve({ ok: true, downloadId });
+            }
+        });
+    });
+
+    if (downloadButton) {
+        downloadButton.addEventListener('click', async () => {
+            if (!currentData) {
+                statusDisplay.textContent = '没有可下载的数据，请先同步。';
+                return;
+            }
+
+            const attachments = collectDownloadableAttachments();
+            if (attachments.length === 0) {
+                statusDisplay.textContent = '当前筛选下没有可下载的附件。';
+                return;
+            }
+
+            downloadButton.disabled = true;
+            try {
+                statusDisplay.textContent = `准备下载 ${attachments.length} 个附件，请确认浏览器的下载权限。`;
+
+                let successCount = 0;
+                let failedCount = 0;
+                const filenameCounts = new Map();
+
+                for (let i = 0; i < attachments.length; i++) {
+                    const attachment = attachments[i];
+                    const filename = buildDownloadFilename(attachment, i, filenameCounts);
+                    const result = await triggerDownload(attachment, filename);
+                    if (result.ok) {
+                        successCount += 1;
+                    } else {
+                        failedCount += 1;
+                    }
+                }
+
+                const summaryParts = [];
+                if (successCount > 0) summaryParts.push(`${successCount} 个附件已加入下载队列`);
+                if (failedCount > 0) summaryParts.push(`${failedCount} 个附件下载失败`);
+                statusDisplay.textContent = summaryParts.join('，') || '下载任务已完成。';
+            } catch (error) {
+                console.error('执行批量下载时发生错误', error);
+                statusDisplay.textContent = '批量下载时出现异常，请查看控制台日志。';
+            } finally {
+                downloadButton.disabled = false;
+            }
+        });
+    }
 
     // “导出JSON”按钮点击事件
     exportButton.addEventListener('click', () => {

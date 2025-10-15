@@ -208,10 +208,36 @@ function extractData_AnnouncementDetails(config) {
 
 function extractData_AssignmentDetails(config) {
     const dueDateElement = document.querySelector(config.assignmentDetails.dueDate);
-    const dueDate = dueDateElement ? dueDateElement.innerText.trim().replace(/\n/g, ' ') : '';
-    const instructions = document.querySelector(config.assignmentDetails.instructionsContainer)?.innerHTML.trim();
-    const attachments = Array.from(document.querySelectorAll(config.assignmentDetails.attachments)).map(a => ({ text: a.innerText, url: a.href }));
-    return { dueDate, instructions, attachments };
+    const dueDateText = dueDateElement ? dueDateElement.innerText : '';
+    const dueDate = dueDateText ? dueDateText.trim().replace(/\n/g, ' ') : '';
+
+    const instructionsElement = document.querySelector(config.assignmentDetails.instructionsContainer);
+    const instructionsHtml = instructionsElement ? instructionsElement.innerHTML.trim() : '';
+
+    const resolveUrl = (rawHref) => {
+        if (!rawHref) return '';
+        try {
+            return new URL(rawHref, window.location.origin).href;
+        } catch (e) {
+            console.warn('[extractData_AssignmentDetails] Failed to resolve attachment url', rawHref, e);
+            return rawHref;
+        }
+    };
+
+    const attachments = Array.from(document.querySelectorAll(config.assignmentDetails.attachments))
+        .map((anchor, index) => {
+            if (!anchor) return null;
+            const href = anchor.getAttribute('href') || anchor.href || '';
+            if (!href) return null;
+            const text = (anchor.innerText || anchor.textContent || '').trim();
+            return {
+                text: text || `附件 ${index + 1}`,
+                url: resolveUrl(href)
+            };
+        })
+        .filter(Boolean);
+
+    return { dueDate, instructions: instructionsHtml, attachments };
 }
 
 // 4. 主流程函数
